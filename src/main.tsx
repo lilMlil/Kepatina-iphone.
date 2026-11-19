@@ -1,4 +1,5 @@
 import "@fontsource-variable/nunito";
+import "@fontsource-variable/fredoka";
 import "./styles.css";
 
 import { StrictMode } from "react";

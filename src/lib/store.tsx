@@ -23,13 +23,21 @@ import {
   getNotifPermission,
   requestNotifPermission,
   showTestNotification,
-  showWebNotification,
   syncNativeSchedule,
 } from "./native/notifications";
 import { applyStatusBarTheme, isNative, RECOVERY_EVENT, RECOVERY_KEY } from "./native/platform";
 import { accountCopy } from "./account-i18n";
 import type { MedCourse } from "./meds";
 import type { Expense } from "./expenses";
+import { deleteLocalFiles, listLocalFiles, restoreLocalFiles, type StoredFile } from "./media";
+import type { DocumentEntry, MemoryEntry } from "./memories";
+import { emptyState, partitionPetState, type Owner, type SavedState } from "./family-state";
+import {
+  hasBackupContent,
+  persistBackupArchive,
+  restoreBackupArchive,
+  validateLegacyState,
+} from "./backup-archive";
 import {
   dueForNotification,
   nextDueDate,
@@ -41,25 +49,6 @@ import {
 
 export type Theme = "light" | "dark";
 
-interface Owner {
-  name: string;
-  photo: string | null;
-  phone?: string;
-}
-
-interface SavedState {
-  pets: Pet[];
-  reminders: Reminder[];
-  selectedPetId: string | null;
-  owner: Owner;
-  checks: Record<string, boolean>;
-  weights: WeightEntry[];
-  vaccines: VaccineEntry[];
-  visits: VisitEntry[];
-  meds: MedCourse[];
-  expenses: Expense[];
-}
-
 interface Settings {
   theme: Theme;
   lang: Lang;
@@ -69,18 +58,6 @@ const STATE_KEY = "kepatina/state-v1";
 const SETTINGS_KEY = "kepatina/settings-v1";
 const SYNCED_KEY = "kepatina/synced-user";
 const BEFORE_RESTORE_KEY = "kepatina/state-before-restore";
-const emptyState: SavedState = {
-  pets: [],
-  reminders: [],
-  selectedPetId: null,
-  owner: { name: "", photo: null },
-  checks: {},
-  weights: [],
-  vaccines: [],
-  visits: [],
-  meds: [],
-  expenses: [],
-};
 
 function mergeById<T extends { id: string }>(local: T[] = [], remote: T[] = []): T[] {
   const seen = new Set(remote.map((x) => x.id));
@@ -97,6 +74,8 @@ function mergeStates(local: SavedState, remote: Partial<SavedState>): SavedState
     weights: mergeById(local.weights, remote.weights),
     vaccines: mergeById(local.vaccines, remote.vaccines),
     visits: mergeById(local.visits, remote.visits),
+    memories: mergeById(local.memories, remote.memories),
+    documents: mergeById(local.documents, remote.documents),
     meds: mergeById(local.meds, remote.meds),
     expenses: mergeById(local.expenses, remote.expenses),
     checks: { ...local.checks, ...(remote.checks ?? {}) },
@@ -117,6 +96,7 @@ export interface FamilyInfo {
   code: string;
   ownerId: string;
   members: { userId: string; email: string | null; joinedAt: string | null }[];
+  sharedPetOwners: Record<string, string>;
 }
 
 /** A family has at most this many members (the database enforces the same limit). */
@@ -128,6 +108,46 @@ export type JoinError = "invalid" | "already" | "full" | "limit" | "error";
 interface FamilyLoad {
   info: FamilyInfo;
   data: Partial<SavedState>;
+}
+
+interface FamilyData extends Partial<SavedState> {
+  sharedPetOwners?: Record<string, string>;
+}
+
+function familySharedState(
+  state: Partial<SavedState>,
+  sharedPetOwners: Record<string, string>,
+): SavedState {
+  return partitionPetState({ ...emptyState, ...state }, new Set(Object.keys(sharedPetOwners)))
+    .sharedState;
+}
+
+function sharedFamilyData(state: SavedState, sharedPetOwners: Record<string, string>): FamilyData {
+  return { ...familySharedState(state, sharedPetOwners), sharedPetOwners };
+}
+
+function otherMembersPetIds(family: FamilyInfo, userId: string): Set<string> {
+  return new Set(
+    Object.entries(family.sharedPetOwners)
+      .filter(([, ownerId]) => ownerId !== userId)
+      .map(([petId]) => petId),
+  );
+}
+
+function personalFamilyData(
+  state: SavedState,
+  sharedPetOwners: Record<string, string>,
+  userId: string,
+): SavedState {
+  const sharedPetIds = new Set(Object.keys(sharedPetOwners));
+  const privateState = partitionPetState(state, sharedPetIds).privateState;
+  const ownedPetIds = new Set(
+    Object.entries(sharedPetOwners)
+      .filter(([, ownerId]) => ownerId === userId)
+      .map(([petId]) => petId),
+  );
+  const ownedSharedState = partitionPetState(state, ownedPetIds).sharedState;
+  return mergeStates(privateState, ownedSharedState);
 }
 
 function sameFamily(a: FamilyInfo | null, b: FamilyInfo | null): boolean {
@@ -144,7 +164,7 @@ interface Ctx extends SavedState {
   selectedPet: Pet | undefined;
   addPet: (name: string, species: Species, photo: string | null) => void;
   updatePet: (id: string, patch: Partial<Pet>) => void;
-  removePet: (id: string) => void;
+  removePet: (id: string) => Promise<void>;
   selectPet: (id: string) => void;
   addReminder: (r: Omit<Reminder, "id">) => void;
   removeReminder: (id: string) => void;
@@ -157,6 +177,10 @@ interface Ctx extends SavedState {
   removeVaccine: (id: string) => void;
   addVisit: (v: Omit<VisitEntry, "id">) => void;
   removeVisit: (id: string) => void;
+  addMemory: (memory: Omit<MemoryEntry, "id">) => void;
+  removeMemory: (id: string) => Promise<boolean>;
+  addDocument: (document: Omit<DocumentEntry, "id">) => void;
+  removeDocument: (id: string) => Promise<boolean>;
   addMed: (m: Omit<MedCourse, "id" | "done">) => void;
   removeMed: (id: string) => void;
   toggleDose: (id: string, key: string) => void;
@@ -175,6 +199,7 @@ interface Ctx extends SavedState {
   family: FamilyInfo | null;
   createFamily: () => Promise<boolean>;
   joinFamily: (code: string) => Promise<JoinError | null>;
+  setPetShared: (petId: string, shared: boolean) => boolean;
   leaveFamily: () => Promise<void>;
   removeMember: (userId: string) => Promise<void>;
   regenerateCode: () => Promise<boolean>;
@@ -191,6 +216,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [notif, setNotif] = useState<NotifState>("default");
   const remoteLoaded = useRef<string | null>(null);
+  const recoveredPreviousArchive = useRef(false);
   const [online, setOnline] = useState(true);
   const [recovery, setRecovery] = useState(false);
   const storageWarned = useRef(false);
@@ -270,6 +296,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!supabaseConfigured) return;
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || session?.user.id !== remoteLoaded.current)
+        remoteLoaded.current = null;
       if (event === "PASSWORD_RECOVERY") setRecovery(true);
       setUser(session?.user ?? null);
     });
@@ -278,66 +306,84 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /** null = not in a family; "error" = could not find out (network / server) — never treat that as "not in a family". */
-  const loadFamily = useCallback(
-    async (uid: string): Promise<FamilyLoad | null | "error"> => {
-      const { data: mem, error: memError } = await supabase
+  const loadFamily = useCallback(async (uid: string): Promise<FamilyLoad | null | "error"> => {
+    const { data: mem, error: memError } = await supabase
+      .from("family_members")
+      .select("family_id")
+      .eq("user_id", uid)
+      .maybeSingle();
+    if (memError) return "error";
+    if (!mem) return null;
+    const [famRes, membersRes] = await Promise.all([
+      supabase
+        .from("families")
+        .select("id, invite_code, owner_id, data")
+        .eq("id", mem.family_id)
+        .maybeSingle(),
+      supabase
         .from("family_members")
-        .select("family_id")
-        .eq("user_id", uid)
-        .maybeSingle();
-      if (memError) return "error";
-      if (!mem) return null;
-      const [famRes, membersRes] = await Promise.all([
-        supabase
-          .from("families")
-          .select("id, invite_code, owner_id, data")
-          .eq("id", mem.family_id)
-          .maybeSingle(),
-        supabase
-          .from("family_members")
-          .select("user_id, email, joined_at")
-          .eq("family_id", mem.family_id)
-          .order("joined_at"),
-      ]);
-      if (famRes.error || membersRes.error) return "error";
-      const fam = famRes.data;
-      if (!fam) return null;
-      return {
-        info: {
-          id: fam.id,
-          code: fam.invite_code,
-          ownerId: fam.owner_id,
-          members: (membersRes.data ?? []).map((m) => ({
-            userId: m.user_id,
-            email: m.email,
-            joinedAt: m.joined_at ?? null,
-          })),
-        },
-        data: (fam.data ?? {}) as Partial<SavedState>,
-      };
-    },
-    [],
-  );
+        .select("user_id, email, joined_at")
+        .eq("family_id", mem.family_id)
+        .order("joined_at"),
+    ]);
+    if (famRes.error || membersRes.error) return "error";
+    const fam = famRes.data;
+    if (!fam) return null;
+    const rawData = (fam.data ?? {}) as FamilyData;
+    const sharedPetOwners = {
+      ...Object.fromEntries((rawData.pets ?? []).map((pet) => [pet.id, fam.owner_id])),
+      ...(rawData.sharedPetOwners ?? {}),
+    };
+    const { sharedPetOwners: _ignored, ...data } = rawData;
+    return {
+      info: {
+        id: fam.id,
+        code: fam.invite_code,
+        ownerId: fam.owner_id,
+        sharedPetOwners,
+        members: (membersRes.data ?? []).map((m) => ({
+          userId: m.user_id,
+          email: m.email,
+          joinedAt: m.joined_at ?? null,
+        })),
+      },
+      data,
+    };
+  }, []);
 
-  const hasContent = (d: Partial<SavedState> | undefined) =>
-    !!(d && (d.pets?.length || d.reminders?.length || d.owner?.name || d.owner?.photo));
+  const hasContent = (d: Partial<SavedState> | undefined): d is Partial<SavedState> =>
+    !!(
+      d &&
+      (d.pets?.length ||
+        d.reminders?.length ||
+        d.weights?.length ||
+        d.vaccines?.length ||
+        d.visits?.length ||
+        d.memories?.length ||
+        d.documents?.length ||
+        d.meds?.length ||
+        d.expenses?.length ||
+        Object.keys(d.checks ?? {}).length ||
+        d.owner?.name ||
+        d.owner?.photo ||
+        d.owner?.phone)
+    );
 
-  // On sign-in (or reconnect): load family or personal cloud state, or upload local state if none exists
+  // On sign-in (or reconnect): restore the user's archive, migrate legacy rows, or back up local data.
   useEffect(() => {
     if (!ready || !user || !online || remoteLoaded.current === user.id) return;
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    // Could not reach the cloud: do NOT guess (that could overwrite good data) — just try again soon.
     const tryAgainLater = () => {
       retryTimer = setTimeout(() => setSyncRetry((n) => n + 1), 15000);
     };
     (async () => {
-      // Signed in here before? Then this phone already holds the synced copy and the cloud is newer.
-      let knownDevice = false;
+      let localState = stateRef.current;
       try {
-        knownDevice = localStorage.getItem(SYNCED_KEY) === user.id;
+        const previousUserId = localStorage.getItem(SYNCED_KEY);
+        if (previousUserId && previousUserId !== user.id) localState = emptyState;
       } catch {
-        /* ignore */
+        /* local state is still the best available source if storage is unavailable */
       }
       const fam = await loadFamily(user.id);
       if (cancelled) return;
@@ -345,48 +391,139 @@ export function AppProvider({ children }: { children: ReactNode }) {
         tryAgainLater();
         return;
       }
-      if (fam) {
-        setFamily(fam.info);
-        if (hasContent(fam.data)) {
-          lastPushed.current = JSON.stringify(fam.data);
-          setState(
-            knownDevice ? { ...emptyState, ...fam.data } : mergeStates(stateRef.current, fam.data),
-          );
+      const { data: objects, error: listError } = await supabase.storage
+        .from("user-backups")
+        .list(user.id, { limit: 100, search: "backup" });
+      if (cancelled) return;
+      if (listError) {
+        tryAgainLater();
+        return;
+      }
+
+      const currentExists = (objects ?? []).some((object) => object.name === "backup.zip");
+      const previousExists = (objects ?? []).some((object) => object.name === "backup.prev.zip");
+      const backupNames = currentExists
+        ? previousExists
+          ? ["backup.zip", "backup.prev.zip"]
+          : ["backup.zip"]
+        : previousExists
+          ? ["backup.prev.zip"]
+          : [];
+      let personal: SavedState = emptyState;
+      let restoredSettings: Settings | undefined;
+      let legacyRowExists = false;
+      if (backupNames.length) {
+        let archiveRestored = false;
+        for (const backupName of backupNames) {
+          const { data: archive, error: downloadError } = await supabase.storage
+            .from("user-backups")
+            .download(`${user.id}/${backupName}`);
+          if (cancelled) return;
+          if (downloadError || !archive) {
+            console.error(`[backup] could not download ${backupName}`, downloadError);
+            continue;
+          }
+          try {
+            let restoredState: SavedState | undefined;
+            let archiveSettings: Settings | undefined;
+            const contents = await restoreBackupArchive(archive, {
+              files: restoreLocalFiles,
+              state: (next) => {
+                restoredState = next;
+              },
+              settings: (next) => {
+                archiveSettings = next;
+              },
+            });
+            if (cancelled) return;
+            personal = restoredState ?? contents.state;
+            restoredSettings = archiveSettings ?? contents.settings;
+            recoveredPreviousArchive.current = backupName === "backup.prev.zip";
+            archiveRestored = true;
+            break;
+          } catch (error) {
+            console.error(`[backup] ${backupName} validation or restore failed`, error);
+          }
+        }
+        if (!archiveRestored) {
+          tryAgainLater();
+          return;
+        }
+        try {
+          const { error: deleteError } = await supabase
+            .from("user_state")
+            .delete()
+            .eq("user_id", user.id);
+          if (deleteError) console.error("[backup] legacy row cleanup failed", deleteError);
+        } catch (error) {
+          console.error("[backup] legacy row cleanup failed", error);
         }
       } else {
-        setFamily(null);
-        const { data, error } = await supabase
+        const { data: legacy, error: legacyError } = await supabase
           .from("user_state")
           .select("data")
           .eq("user_id", user.id)
           .maybeSingle();
         if (cancelled) return;
-        if (error) {
+        if (legacyError) {
           tryAgainLater();
           return;
         }
-        const remote = data?.data as Partial<SavedState> | undefined;
-        if (hasContent(remote))
-          setState(knownDevice ? { ...emptyState, ...remote } : mergeStates(stateRef.current, remote));
-        else
-          await supabase
-            .from("user_state")
-            .upsert({ user_id: user.id, data: stateRef.current as never });
-      }
-      if (!cancelled) {
-        remoteLoaded.current = user.id;
-        try {
-          localStorage.setItem(SYNCED_KEY, user.id);
-        } catch {
-          /* ignore */
+        legacyRowExists = Boolean(legacy);
+        const legacyState = validateLegacyState(legacy?.data);
+        personal =
+          legacyState && hasBackupContent(legacyState)
+            ? mergeStates(localState, legacyState)
+            : localState;
+        if (fam) personal = personalFamilyData(personal, fam.info.sharedPetOwners, user.id);
+        if (hasBackupContent(personal)) {
+          try {
+            await persistBackupArchive(
+              user.id,
+              personal,
+              settings,
+              await listLocalFiles(),
+              supabase.storage.from("user-backups"),
+            );
+            if (legacyRowExists) {
+              const { error: deleteError } = await supabase
+                .from("user_state")
+                .delete()
+                .eq("user_id", user.id);
+              if (deleteError) console.error("[backup] legacy row cleanup failed", deleteError);
+            }
+          } catch (error) {
+            console.error("[backup] initial archive upload failed", error);
+            tryAgainLater();
+            return;
+          }
         }
+      }
+      if (cancelled) return;
+      if (restoredSettings) setSettings(restoredSettings);
+      if (fam) {
+        const familyInfo = { ...fam.info, sharedPetOwners: { ...fam.info.sharedPetOwners } };
+        setFamily(familyInfo);
+        lastPushed.current = hasContent(fam.data)
+          ? JSON.stringify({ ...fam.data, sharedPetOwners: familyInfo.sharedPetOwners })
+          : "";
+        setState(mergeStates(personal, familySharedState(fam.data, familyInfo.sharedPetOwners)));
+      } else {
+        setFamily(null);
+        setState(personal);
+      }
+      remoteLoaded.current = user.id;
+      try {
+        localStorage.setItem(SYNCED_KEY, user.id);
+      } catch {
+        /* the cloud archive remains the source of truth */
       }
     })();
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, [user, ready, online, loadFamily, syncRetry]);
+  }, [user, ready, online, loadFamily, syncRetry, settings]);
 
   // Live updates from other family members
   useEffect(() => {
@@ -398,30 +535,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
         { event: "UPDATE", schema: "public", table: "families", filter: `id=eq.${family.id}` },
         (payload) => {
           const row = payload.new as {
-            data?: Partial<SavedState>;
+            data?: FamilyData;
             invite_code?: string;
             owner_id?: string;
           };
+          const currentFamily = familyRef.current;
+          const rowData = row.data;
+          const nextOwners = rowData
+            ? {
+                ...Object.fromEntries(
+                  (rowData.pets ?? []).map((pet) => [pet.id, row.owner_id ?? family.ownerId]),
+                ),
+                ...(rowData.sharedPetOwners ?? {}),
+              }
+            : (currentFamily?.sharedPetOwners ?? family.sharedPetOwners);
+          const data = familySharedState(rowData ?? {}, nextOwners);
           // A new invite code or a new owner (the owner left) arrives here too
           setFamily((cur) =>
             cur &&
             ((row.invite_code && row.invite_code !== cur.code) ||
-              (row.owner_id && row.owner_id !== cur.ownerId))
-              ? { ...cur, code: row.invite_code ?? cur.code, ownerId: row.owner_id ?? cur.ownerId }
+              (row.owner_id && row.owner_id !== cur.ownerId) ||
+              JSON.stringify(nextOwners) !== JSON.stringify(cur.sharedPetOwners))
+              ? {
+                  ...cur,
+                  code: row.invite_code ?? cur.code,
+                  ownerId: row.owner_id ?? cur.ownerId,
+                  sharedPetOwners: nextOwners,
+                }
               : cur,
           );
-          const data = row.data;
-          if (!data) return;
-          const json = JSON.stringify(data);
+          if (!rowData) return;
+          const json = JSON.stringify({ ...rowData, sharedPetOwners: nextOwners });
           if (json === lastPushed.current) return;
           lastPushed.current = json;
-          setState((cur) => ({
-            ...emptyState,
-            ...data,
-            selectedPetId: data.pets?.some((p) => p.id === cur.selectedPetId)
-              ? cur.selectedPetId
-              : (data.selectedPetId ?? null),
-          }));
+          setState((cur) => {
+            const privateState = currentFamily
+              ? partitionPetState(cur, new Set(Object.keys(currentFamily.sharedPetOwners)))
+                  .privateState
+              : cur;
+            const merged = mergeStates(privateState, data);
+            return {
+              ...merged,
+              selectedPetId: merged.pets.some((p) => p.id === cur.selectedPetId)
+                ? cur.selectedPetId
+                : (privateState.selectedPetId ?? null),
+            };
+          });
         },
       )
       .subscribe();
@@ -432,7 +591,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [family?.id]);
 
-  // Sync changes to cloud (debounced); waits while offline and resumes on reconnect
+  // Keep the private archive current (debounced); retries after failures and reconnects.
   useEffect(() => {
     if (!user || !online || remoteLoaded.current !== user.id) return;
     const lang = settings.lang;
@@ -445,31 +604,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setTimeout(() => setSyncRetry((n) => n + 1), 20000);
     };
     const h = setTimeout(() => {
-      const json = JSON.stringify(state);
       void (async () => {
+        const personalState = family
+          ? personalFamilyData(state, family.sharedPetOwners, user.id)
+          : state;
+        if (hasBackupContent(personalState)) {
+          try {
+            await persistBackupArchive(
+              user.id,
+              personalState,
+              settings,
+              await listLocalFiles(),
+              supabase.storage.from("user-backups"),
+              recoveredPreviousArchive.current,
+            );
+            recoveredPreviousArchive.current = false;
+            syncWarned.current = false;
+          } catch (error) {
+            console.error("[backup] archive upload failed", error);
+            pushFailed();
+            return;
+          }
+        }
         if (family) {
-          if (json === lastPushed.current) return;
-          lastPushed.current = json;
+          const sharedData = sharedFamilyData(state, family.sharedPetOwners);
+          const sharedJson = JSON.stringify(sharedData);
+          if (sharedJson === lastPushed.current) {
+            syncWarned.current = false;
+            return;
+          }
           const { data, error } = await supabase
             .from("families")
-            .update({ data: state as never, updated_at: new Date().toISOString() })
+            .update({ data: sharedData as never, updated_at: new Date().toISOString() })
             .eq("id", family.id)
             .select("id");
           if (error) return pushFailed();
+          lastPushed.current = sharedJson;
           syncWarned.current = false;
           // Nothing was updated: we are not in this family any more (removed, or the family is gone)
           if (!data || data.length === 0) void refreshFamilyRef.current();
-        } else {
-          const { error } = await supabase
-            .from("user_state")
-            .upsert({ user_id: user.id, data: state as never, updated_at: new Date().toISOString() });
-          if (error) return pushFailed();
-          syncWarned.current = false;
         }
       })();
     }, 800);
     return () => clearTimeout(h);
-  }, [state, user, online, family, syncRetry, settings.lang]);
+  }, [state, user, online, family, syncRetry, settings]);
 
   /** Re-reads the member list / code / owner. If we were removed from the family, go back to personal mode. */
   const refreshFamily = useCallback(async () => {
@@ -477,9 +655,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const fam = await loadFamily(user.id);
     if (fam === "error") return; // a network hiccup is not a removal
     if (!fam) {
-      if (familyRef.current) {
+      const currentFamily = familyRef.current;
+      if (currentFamily) {
         lastPushed.current = "";
         toast.info(dicts[settings.lang].famGone);
+        setState(
+          (current) =>
+            partitionPetState(current, otherMembersPetIds(currentFamily, user.id)).privateState,
+        );
       }
       setFamily(null);
       return;
@@ -504,55 +687,80 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const createFamily = useCallback(async () => {
     if (!user) return false;
-    const { error } = await supabase.rpc("create_family", { initial: stateRef.current as never });
+    const initialData = sharedFamilyData(emptyState, {});
+    const { error } = await supabase.rpc("create_family", { initial: initialData as never });
     if (error) return false;
-    lastPushed.current = JSON.stringify(stateRef.current);
+    lastPushed.current = JSON.stringify(initialData);
     await refreshFamily();
     return true;
   }, [user, refreshFamily]);
 
-  const joinFamily = useCallback(
-    async (code: string): Promise<JoinError | null> => {
-      const { data, error } = await supabase.rpc("join_family", { code });
-      if (error) {
-        const m = error.message.toLowerCase();
-        if (m.includes("already in a family")) return "already";
-        if (m.includes("family full")) return "full";
-        if (m.includes("too many attempts")) return "limit";
-        return "error";
+  const setPetShared = useCallback(
+    (petId: string, shared: boolean) => {
+      if (!user || !family) return false;
+      const currentOwner = family.sharedPetOwners[petId];
+      if (shared) {
+        if (currentOwner) return currentOwner === user.id || family.ownerId === user.id;
+        if (!stateRef.current.pets.some((pet) => pet.id === petId)) return false;
+        setFamily((current) =>
+          current
+            ? {
+                ...current,
+                sharedPetOwners: { ...current.sharedPetOwners, [petId]: user.id },
+              }
+            : current,
+        );
+        return true;
       }
-      if (!data) return "invalid";
-      // Joined. Load the family the same way as on a "new device": what is on this phone is MERGED
-      // with the family's data (nothing is lost), then the result is shared with the family.
-      try {
-        localStorage.removeItem(SYNCED_KEY);
-      } catch {
-        /* ignore */
-      }
-      remoteLoaded.current = null;
-      setSyncRetry((n) => n + 1);
-      return null;
+      if (currentOwner !== user.id && family.ownerId !== user.id) return false;
+      setFamily((current) => {
+        if (!current) return current;
+        const sharedPetOwners = { ...current.sharedPetOwners };
+        delete sharedPetOwners[petId];
+        return { ...current, sharedPetOwners };
+      });
+      return true;
     },
-    [],
+    [user, family],
   );
+
+  const joinFamily = useCallback(async (code: string): Promise<JoinError | null> => {
+    const { data, error } = await supabase.rpc("join_family", { code });
+    if (error) {
+      const m = error.message.toLowerCase();
+      if (m.includes("already in a family")) return "already";
+      if (m.includes("family full")) return "full";
+      if (m.includes("too many attempts")) return "limit";
+      return "error";
+    }
+    if (!data) return "invalid";
+    // Reload the member's private cloud state separately from the family's shared pets.
+    remoteLoaded.current = null;
+    setSyncRetry((n) => n + 1);
+    return null;
+  }, []);
 
   const leaveFamily = useCallback(async () => {
     if (!user || !family) return;
     const { error } = await supabase.rpc("leave_family");
     if (error) {
-      toast.error(dicts[settings.lang].famError);
+      console.error("[family] leave_family failed", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
+      toast.error(error.message || dicts[settings.lang].famError);
       return;
     }
     // If the creator leaves, the database hands the family over to the next member.
     lastPushed.current = "";
+    const keepPetIds = otherMembersPetIds(family, user.id);
+    const personalState = partitionPetState(stateRef.current, keepPetIds).privateState;
+    setState(personalState);
     setFamily(null);
     toast.success(dicts[settings.lang].famLeft);
-    // keep a personal cloud copy of what this phone has (the sync above also retries if this fails)
-    await supabase.from("user_state").upsert({
-      user_id: user.id,
-      data: stateRef.current as never,
-      updated_at: new Date().toISOString(),
-    });
+    // Keep privately owned pets and data, but do not copy other members' shared bundles.
   }, [user, family, settings.lang]);
 
   const removeMember = useCallback(
@@ -564,8 +772,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .eq("family_id", family.id)
         .eq("user_id", userId)
         .select("user_id");
-      if (error || !data || data.length === 0) toast.error(dicts[settings.lang].famError);
-      else toast.success(dicts[settings.lang].famMemberRemoved);
+      if (error) {
+        console.error("[family] remove member failed", error);
+        toast.error(error.message || dicts[settings.lang].famError);
+      } else if (!data || data.length === 0) {
+        console.error("[family] remove member returned no deleted row", { userId });
+        toast.error(dicts[settings.lang].famError);
+      } else toast.success(dicts[settings.lang].famMemberRemoved);
       await refreshFamily();
     },
     [family, refreshFamily, settings.lang],
@@ -597,11 +810,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     remoteLoaded.current = null;
     lastPushed.current = "";
-    try {
-      localStorage.removeItem(SYNCED_KEY);
-    } catch {
-      /* ignore */
-    }
     setFamily(null);
     setUser(null);
     return null;
@@ -658,9 +866,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       due.forEach((r) => {
         const pet = state.pets.find((p) => p.id === r.petId);
         try {
-          void showWebNotification(`${t.notifPrefix} ${pet?.name ?? ""}`.trim(), {
+          new Notification(`${t.notifPrefix} ${pet?.name ?? ""}`.trim(), {
             body: r.title,
-            icon: pet?.photo ?? `${import.meta.env.BASE_URL}icon-192.png`,
+            icon: pet?.photo ?? "./icon-192.png",
           });
         } catch {
           /* ignore */
@@ -706,21 +914,82 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, pets: s.pets.map((p) => (p.id === id ? { ...p, ...patch } : p)) }));
   }, []);
 
-  const removePet = useCallback((id: string) => {
-    setState((s) => {
-      const next = removePetFrom(s.pets, s.reminders, id);
-      return {
+  const removePet = useCallback(
+    async (id: string) => {
+      const current = stateRef.current;
+      const files: StoredFile[] = [
+        ...current.memories
+          .filter((memory) => memory.petId === id)
+          .flatMap((memory) => memory.files),
+        ...current.documents
+          .filter((document) => document.petId === id)
+          .map((document) => document.file),
+      ];
+      try {
+        await deleteLocalFiles(files);
+      } catch {
+        toast.error(dicts[settings.lang].memoryDeleteError);
+        return;
+      }
+      setState((s) => {
+        const next = removePetFrom(s.pets, s.reminders, id);
+        return {
+          ...s,
+          ...next,
+          weights: removeHealthFor(s.weights, id),
+          vaccines: removeHealthFor(s.vaccines, id),
+          visits: removeHealthFor(s.visits, id),
+          memories: s.memories.filter((memory) => memory.petId !== id),
+          documents: s.documents.filter((document) => document.petId !== id),
+          meds: (s.meds ?? []).filter((m) => m.petId !== id),
+          expenses: (s.expenses ?? []).filter((e) => e.petId !== id),
+          selectedPetId: s.selectedPetId === id ? (next.pets[0]?.id ?? null) : s.selectedPetId,
+        };
+      });
+      setFamily((current) => {
+        if (!current?.sharedPetOwners[id]) return current;
+        const sharedPetOwners = { ...current.sharedPetOwners };
+        delete sharedPetOwners[id];
+        return { ...current, sharedPetOwners };
+      });
+    },
+    [settings.lang],
+  );
+
+  const removeMemory = useCallback(
+    async (id: string) => {
+      const memory = stateRef.current.memories.find((entry) => entry.id === id);
+      if (!memory) return false;
+      try {
+        await deleteLocalFiles(memory.files);
+      } catch {
+        toast.error(dicts[settings.lang].memoryDeleteError);
+        return false;
+      }
+      setState((s) => ({ ...s, memories: s.memories.filter((entry) => entry.id !== id) }));
+      return true;
+    },
+    [settings.lang],
+  );
+
+  const removeDocument = useCallback(
+    async (id: string) => {
+      const document = stateRef.current.documents.find((entry) => entry.id === id);
+      if (!document) return false;
+      try {
+        await deleteLocalFiles([document.file]);
+      } catch {
+        toast.error(dicts[settings.lang].documentsDeleteError);
+        return false;
+      }
+      setState((s) => ({
         ...s,
-        ...next,
-        weights: removeHealthFor(s.weights, id),
-        vaccines: removeHealthFor(s.vaccines, id),
-        visits: removeHealthFor(s.visits, id),
-        meds: (s.meds ?? []).filter((m) => m.petId !== id),
-        expenses: (s.expenses ?? []).filter((e) => e.petId !== id),
-        selectedPetId: s.selectedPetId === id ? (next.pets[0]?.id ?? null) : s.selectedPetId,
-      };
-    });
-  }, []);
+        documents: s.documents.filter((entry) => entry.id !== id),
+      }));
+      return true;
+    },
+    [settings.lang],
+  );
 
   const value = useMemo<Ctx>(
     () => ({
@@ -787,9 +1056,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addVaccine: (v) =>
         setState((s) => ({ ...s, vaccines: [...s.vaccines, { ...v, id: makeId() }] })),
       removeVaccine: (id) =>
-        setState((s) => ({ ...s, vaccines: s.vaccines.filter((v) => v.id !== id) })),
+        setState((s) => ({
+          ...s,
+          vaccines: s.vaccines.filter((v) => v.id !== id),
+          documents: s.documents.map((document) =>
+            document.recordKind === "vaccine" && document.recordId === id
+              ? { ...document, recordKind: undefined, recordId: undefined }
+              : document,
+          ),
+        })),
       addVisit: (v) => setState((s) => ({ ...s, visits: [...s.visits, { ...v, id: makeId() }] })),
-      removeVisit: (id) => setState((s) => ({ ...s, visits: s.visits.filter((v) => v.id !== id) })),
+      removeVisit: (id) =>
+        setState((s) => ({
+          ...s,
+          visits: s.visits.filter((v) => v.id !== id),
+          documents: s.documents.map((document) =>
+            document.recordKind === "visit" && document.recordId === id
+              ? { ...document, recordKind: undefined, recordId: undefined }
+              : document,
+          ),
+        })),
+      addMemory: (memory) =>
+        setState((s) => ({ ...s, memories: [...s.memories, { ...memory, id: makeId() }] })),
+      removeMemory,
+      addDocument: (document) =>
+        setState((s) => ({
+          ...s,
+          documents: [...s.documents, { ...document, id: makeId() }],
+        })),
+      removeDocument,
       addMed: (m) =>
         setState((s) => ({ ...s, meds: [...(s.meds ?? []), { ...m, id: makeId(), done: {} }] })),
       removeMed: (id) =>
@@ -819,10 +1114,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       notif,
       enableNotifications,
       signOut: async () => {
+        if (family && user) {
+          setState(
+            partitionPetState(stateRef.current, otherMembersPetIds(family, user.id)).privateState,
+          );
+        }
+        setFamily(null);
         await supabase.auth.signOut();
         remoteLoaded.current = null;
         lastPushed.current = "";
-        setFamily(null);
       },
       deleteAccount,
       recovery,
@@ -833,6 +1133,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       family,
       createFamily,
       joinFamily,
+      setPetShared,
       leaveFamily,
       removeMember,
       regenerateCode,
@@ -847,6 +1148,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addPet,
       updatePet,
       removePet,
+      removeMemory,
+      removeDocument,
       notif,
       enableNotifications,
       deleteAccount,
@@ -858,6 +1161,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       family,
       createFamily,
       joinFamily,
+      setPetShared,
       leaveFamily,
       removeMember,
       regenerateCode,
@@ -874,9 +1178,25 @@ export function useApp() {
   return c;
 }
 
-export const SPECIES: Species[] = ["Suns", "Kaķis", "Trusis", "Putns", "Kāmis"];
+export const SPECIES: Species[] = [
+  "Suns",
+  "Kaķis",
+  "Trusis",
+  "Putns",
+  "Kāmis",
+  "Jūrascūciņa",
+  "Rāpuļi",
+  "Zivtiņas",
+];
 export function speciesLabel(t: Dict, s: Species) {
-  return { Suns: t.spDog, Kaķis: t.spCat, Trusis: t.spRabbit, Putns: t.spBird, Kāmis: t.spHamster }[
-    s
-  ];
+  return {
+    Suns: t.spDog,
+    Kaķis: t.spCat,
+    Trusis: t.spRabbit,
+    Putns: t.spBird,
+    Kāmis: t.spHamster,
+    Jūrascūciņa: t.spGuineaPig,
+    Rāpuļi: t.spReptile,
+    Zivtiņas: t.spFish,
+  }[s];
 }

@@ -19,6 +19,34 @@ CREATE POLICY "own state insert" ON public.user_state FOR INSERT TO authenticate
 CREATE POLICY "own state update" ON public.user_state FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "own state delete" ON public.user_state FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
+-- 1a) Private per-user archive backups (personal data and IndexedDB media).
+INSERT INTO storage.buckets (id, name, public, allowed_mime_types)
+VALUES ('user-backups', 'user-backups', false, ARRAY['application/zip'])
+ON CONFLICT (id) DO UPDATE
+SET public = false, allowed_mime_types = ARRAY['application/zip'];
+DROP POLICY IF EXISTS "users read own backups" ON storage.objects;
+DROP POLICY IF EXISTS "users upload own backups" ON storage.objects;
+DROP POLICY IF EXISTS "users update own backups" ON storage.objects;
+DROP POLICY IF EXISTS "users delete own backups" ON storage.objects;
+CREATE POLICY "users read own backups" ON storage.objects
+  FOR SELECT TO authenticated USING (
+    bucket_id = 'user-backups' AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+CREATE POLICY "users upload own backups" ON storage.objects
+  FOR INSERT TO authenticated WITH CHECK (
+    bucket_id = 'user-backups' AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+CREATE POLICY "users update own backups" ON storage.objects
+  FOR UPDATE TO authenticated USING (
+    bucket_id = 'user-backups' AND (storage.foldername(name))[1] = auth.uid()::text
+  ) WITH CHECK (
+    bucket_id = 'user-backups' AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+CREATE POLICY "users delete own backups" ON storage.objects
+  FOR DELETE TO authenticated USING (
+    bucket_id = 'user-backups' AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
 -- 2) Family sharing
 -- Invite codes: 12 random characters (hex). Older 8-character codes keep working.
 CREATE OR REPLACE FUNCTION public.gen_invite_code()
@@ -44,6 +72,114 @@ CREATE TABLE IF NOT EXISTS public.family_members (
   PRIMARY KEY (family_id, user_id)
 );
 
+CREATE OR REPLACE FUNCTION public.my_family_id()
+RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT family_id FROM public.family_members WHERE user_id = auth.uid() LIMIT 1
+$$;
+
+-- Family chat is separate from the shared pet data so messages can be queried and streamed.
+CREATE TABLE IF NOT EXISTS public.family_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_id uuid NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+  sender_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind IN ('text', 'image', 'video', 'audio')),
+  content text,
+  media_path text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (
+    (kind = 'text' AND length(btrim(COALESCE(content, ''))) BETWEEN 1 AND 4000 AND media_path IS NULL)
+    OR (
+      kind <> 'text'
+      AND media_path LIKE family_id::text || '/' || sender_id::text || '/%'
+      AND length(COALESCE(content, '')) <= 4000
+    )
+  )
+);
+CREATE INDEX IF NOT EXISTS family_messages_timeline_idx
+  ON public.family_messages (family_id, created_at DESC);
+ALTER TABLE public.family_messages ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, DELETE ON public.family_messages TO authenticated;
+GRANT ALL ON public.family_messages TO service_role;
+DROP POLICY IF EXISTS "family members read chat" ON public.family_messages;
+DROP POLICY IF EXISTS "family members send chat" ON public.family_messages;
+DROP POLICY IF EXISTS "senders delete own chat messages" ON public.family_messages;
+CREATE POLICY "family members read chat" ON public.family_messages
+  FOR SELECT TO authenticated USING (family_id = public.my_family_id());
+CREATE POLICY "family members send chat" ON public.family_messages
+  FOR INSERT TO authenticated WITH CHECK (
+    family_id = public.my_family_id() AND sender_id = auth.uid()
+  );
+CREATE POLICY "senders delete own chat messages" ON public.family_messages
+  FOR DELETE TO authenticated USING (
+    family_id = public.my_family_id() AND sender_id = auth.uid()
+  );
+
+-- People can delete only their own messages (their own media files are covered by the storage policy below).
+DROP POLICY IF EXISTS "senders delete own chat" ON public.family_messages;
+CREATE POLICY "senders delete own chat" ON public.family_messages
+  FOR DELETE TO authenticated USING (
+    family_id = public.my_family_id() AND sender_id = auth.uid()
+  );
+
+-- A viewer's nicknames are private to that viewer, but available on their other devices.
+CREATE TABLE IF NOT EXISTS public.family_member_nicknames (
+  family_id uuid NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  member_user_id uuid NOT NULL,
+  nickname text NOT NULL CHECK (length(btrim(nickname)) BETWEEN 1 AND 40),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (family_id, user_id, member_user_id),
+  FOREIGN KEY (family_id, user_id)
+    REFERENCES public.family_members(family_id, user_id) ON DELETE CASCADE,
+  FOREIGN KEY (family_id, member_user_id)
+    REFERENCES public.family_members(family_id, user_id) ON DELETE CASCADE
+);
+ALTER TABLE public.family_member_nicknames ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.family_member_nicknames TO authenticated;
+GRANT ALL ON public.family_member_nicknames TO service_role;
+DROP POLICY IF EXISTS "view own family nicknames" ON public.family_member_nicknames;
+DROP POLICY IF EXISTS "insert own family nicknames" ON public.family_member_nicknames;
+DROP POLICY IF EXISTS "update own family nicknames" ON public.family_member_nicknames;
+DROP POLICY IF EXISTS "delete own family nicknames" ON public.family_member_nicknames;
+CREATE POLICY "view own family nicknames" ON public.family_member_nicknames
+  FOR SELECT TO authenticated USING (user_id = auth.uid() AND family_id = public.my_family_id());
+CREATE POLICY "insert own family nicknames" ON public.family_member_nicknames
+  FOR INSERT TO authenticated WITH CHECK (
+    user_id = auth.uid() AND family_id = public.my_family_id()
+  );
+CREATE POLICY "update own family nicknames" ON public.family_member_nicknames
+  FOR UPDATE TO authenticated USING (
+    user_id = auth.uid() AND family_id = public.my_family_id()
+  ) WITH CHECK (user_id = auth.uid() AND family_id = public.my_family_id());
+CREATE POLICY "delete own family nicknames" ON public.family_member_nicknames
+  FOR DELETE TO authenticated USING (user_id = auth.uid() AND family_id = public.my_family_id());
+
+-- Private media lives under family-id/uploader-id/...; membership is checked on every read.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('family-chat', 'family-chat', false, 52428800, ARRAY['image/*', 'video/*', 'audio/*'])
+ON CONFLICT (id) DO UPDATE
+SET public = false, file_size_limit = 52428800, allowed_mime_types = EXCLUDED.allowed_mime_types;
+DROP POLICY IF EXISTS "family members read chat media" ON storage.objects;
+DROP POLICY IF EXISTS "members upload own chat media" ON storage.objects;
+DROP POLICY IF EXISTS "members remove own chat media" ON storage.objects;
+CREATE POLICY "family members read chat media" ON storage.objects
+  FOR SELECT TO authenticated USING (
+    bucket_id = 'family-chat'
+    AND (storage.foldername(name))[1] = public.my_family_id()::text
+  );
+CREATE POLICY "members upload own chat media" ON storage.objects
+  FOR INSERT TO authenticated WITH CHECK (
+    bucket_id = 'family-chat'
+    AND (storage.foldername(name))[1] = public.my_family_id()::text
+    AND (storage.foldername(name))[2] = auth.uid()::text
+  );
+CREATE POLICY "members remove own chat media" ON storage.objects
+  FOR DELETE TO authenticated USING (
+    bucket_id = 'family-chat'
+    AND (storage.foldername(name))[1] = public.my_family_id()::text
+    AND (storage.foldername(name))[2] = auth.uid()::text
+  );
+
 -- Failed "join with a code" attempts (to slow down code guessing). Only the functions below touch it.
 CREATE TABLE IF NOT EXISTS public.join_attempts (
   user_id uuid NOT NULL,
@@ -63,11 +199,6 @@ REVOKE UPDATE ON public.families FROM authenticated, anon;
 GRANT UPDATE (data, updated_at) ON public.families TO authenticated;
 ALTER TABLE public.families ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.family_members ENABLE ROW LEVEL SECURITY;
-
-CREATE OR REPLACE FUNCTION public.my_family_id()
-RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT family_id FROM public.family_members WHERE user_id = auth.uid() LIMIT 1
-$$;
 
 DROP POLICY IF EXISTS "members read family" ON public.families;
 DROP POLICY IF EXISTS "members update family" ON public.families;
@@ -129,8 +260,8 @@ BEGIN
   RETURN fid;
 END $$;
 
--- Internal: remove a person from their family. If they were the owner, the longest-standing member
--- becomes the owner; if nobody is left, the family is deleted.
+-- Internal: remove a person from their family. If they were the owner, transfer ownership before
+-- removing their membership so this also works when owner_id has a membership foreign key.
 CREATE OR REPLACE FUNCTION public._leave_family(uid uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE fid uuid; fam_owner uuid; next_owner uuid;
@@ -138,14 +269,21 @@ BEGIN
   SELECT family_id INTO fid FROM family_members WHERE user_id = uid;
   IF fid IS NULL THEN RETURN; END IF;
   SELECT owner_id INTO fam_owner FROM families WHERE id = fid FOR UPDATE;
-  DELETE FROM family_members WHERE user_id = uid;
   IF fam_owner = uid THEN
-    SELECT user_id INTO next_owner FROM family_members WHERE family_id = fid ORDER BY joined_at LIMIT 1;
+    SELECT user_id INTO next_owner
+    FROM family_members
+    WHERE family_id = fid AND user_id <> uid
+    ORDER BY joined_at, user_id
+    LIMIT 1;
     IF next_owner IS NULL THEN
+      -- Cascades remove the last membership and all family-owned data.
       DELETE FROM families WHERE id = fid;
     ELSE
       UPDATE families SET owner_id = next_owner WHERE id = fid;
+      DELETE FROM family_members WHERE family_id = fid AND user_id = uid;
     END IF;
+  ELSE
+    DELETE FROM family_members WHERE family_id = fid AND user_id = uid;
   END IF;
 END $$;
 REVOKE EXECUTE ON FUNCTION public._leave_family(uuid) FROM PUBLIC, anon, authenticated;
@@ -188,6 +326,12 @@ BEGIN
     WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'families'
   ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.families;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'family_messages'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.family_messages;
   END IF;
 END $$;
 

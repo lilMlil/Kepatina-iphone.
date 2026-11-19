@@ -7,9 +7,11 @@ import {
   Lock,
   Phone,
   Scale,
+  Share2,
   Stethoscope,
   Trash2,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
   Avatar,
   AvatarPicker,
@@ -25,6 +27,8 @@ import { speciesLabel, useApp } from "@/lib/store";
 import { fileToAvatar } from "@/lib/image";
 import { petAge, type Species } from "@/lib/reminders";
 import type { Dict } from "@/lib/i18n";
+import { DateField } from "@/components/pickers";
+import { accountCopy } from "@/lib/account-i18n";
 
 function ageText(t: Dict, birthDate?: string) {
   const a = petAge(birthDate);
@@ -41,7 +45,24 @@ export const Route = createFileRoute("/pets")({
 });
 
 function PetsPage() {
-  const { t, pets, selectedPetId, addPet, removePet, selectPet, updatePet, user } = useApp();
+  const {
+    t,
+    pets,
+    selectedPetId,
+    addPet,
+    removePet,
+    selectPet,
+    updatePet,
+    user,
+    family,
+    setPetShared,
+    settings,
+  } = useApp();
+  const c = accountCopy[settings.lang];
+  const canManagePet = (petId: string) => {
+    const sharedBy = family?.sharedPetOwners[petId];
+    return !sharedBy || sharedBy === user?.id || family?.ownerId === user?.id;
+  };
   const { ask, dialog } = useConfirm();
   const [name, setName] = useState("");
   const [species, setSpecies] = useState<Species>("Suns");
@@ -129,18 +150,44 @@ function PetsPage() {
               >
                 <Stethoscope className="h-5 w-5" />
               </button>
-              <button
-                aria-label={`${t.remove} ${p.name}`}
-                onClick={() =>
-                  ask(`${t.removePetQ} ${p.name}?`, t.removePetBody, t.remove, () =>
-                    removePet(p.id),
-                  )
-                }
-                className="p-2 text-muted-foreground"
-              >
-                <Trash2 className="h-5 w-5" />
-              </button>
+              {canManagePet(p.id) && (
+                <button
+                  aria-label={`${t.remove} ${p.name}`}
+                  onClick={() =>
+                    ask(`${t.removePetQ} ${p.name}?`, t.removePetBody, t.remove, () =>
+                      removePet(p.id),
+                    )
+                  }
+                  className="p-2 text-muted-foreground"
+                >
+                  <Trash2 className="h-5 w-5" />
+                </button>
+              )}
             </Card>
+            {family && (
+              <div className="rounded-2xl border bg-card px-4 py-3">
+                <p className="mb-2 text-xs text-muted-foreground">{c.sharePetDescription}</p>
+                {canManagePet(p.id) ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextShared = !family.sharedPetOwners[p.id];
+                      if (!setPetShared(p.id, nextShared)) {
+                        toast.error(c.petShareError);
+                        return;
+                      }
+                      toast.success(nextShared ? c.petShared : c.petUnshared);
+                    }}
+                    className="inline-flex items-center gap-2 text-sm font-bold text-primary"
+                  >
+                    <Share2 className="h-4 w-4" />
+                    {family.sharedPetOwners[p.id] ? c.stopSharingPet : c.sharePet}
+                  </button>
+                ) : (
+                  <p className="text-sm font-bold text-muted-foreground">{c.sharedByFamily}</p>
+                )}
+              </div>
+            )}
             {medOpen === p.id && (
               <Card className="space-y-4">
                 <h3 className="flex items-center gap-2 text-base font-semibold text-primary">
@@ -159,22 +206,20 @@ function PetsPage() {
                   onChange={(e) => updatePet(p.id, { color: e.target.value })}
                 />
                 <div className="grid grid-cols-2 gap-3">
-                  <TextField
+                  <DateField
                     label={t.medBirth}
-                    type="date"
                     max={new Date().toISOString().slice(0, 10)}
                     value={p.birthDate ?? ""}
-                    onChange={(e) => updatePet(p.id, { birthDate: e.target.value })}
+                    onChange={(v) => updatePet(p.id, { birthDate: v })}
                   />
                   <TextField
                     label={t.medWeight}
-                    type="number"
                     inputMode="decimal"
-                    min={0}
-                    max={200}
-                    step="0.1"
+                    maxLength={6}
                     value={p.weightKg ?? ""}
-                    onChange={(e) => updatePet(p.id, { weightKg: e.target.value })}
+                    onChange={(e) =>
+                      updatePet(p.id, { weightKg: e.target.value.replace(/[^\d.,]/g, "") })
+                    }
                   />
                 </div>
                 {ageText(t, p.birthDate) && (

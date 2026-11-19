@@ -3,6 +3,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Avatar, Chip, PageHeading, PrimaryButton, TextField } from "@/components/kit";
 import { useApp } from "@/lib/store";
+import { repeatDailyLabel } from "@/lib/reminders";
+import { DateField, TimeField } from "@/components/pickers";
 
 export const Route = createFileRoute("/reminder-new")({
   component: NewReminder,
@@ -15,11 +17,12 @@ function inDays(n: number) {
 }
 
 function NewReminder() {
-  const { t, pets, selectedPetId, addReminder } = useApp();
+  const { t, pets, selectedPetId, addReminder, settings } = useApp();
   const nav = useNavigate();
   const cats = [t.catVaccine, t.catDeworm, t.catNails, t.catOther];
   const reps = [
     { l: t.once, d: null },
+    { l: repeatDailyLabel[settings.lang], d: 1 },
     { l: t.rep30, d: 30 },
     { l: t.rep90, d: 90 },
     { l: t.rep180, d: 180 },
@@ -91,18 +94,8 @@ function NewReminder() {
         maxLength={60}
       />
       <div className="grid grid-cols-2 gap-3">
-        <TextField
-          label={t.date}
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-        />
-        <TextField
-          label={t.time}
-          type="time"
-          value={time}
-          onChange={(e) => setTime(e.target.value)}
-        />
+        <DateField label={t.date} value={date} onChange={setDate} />
+        <TimeField label={t.time} value={time} onChange={setTime} />
       </div>
       <div className="space-y-2">
         <p className="text-sm font-bold">{t.repeat}</p>

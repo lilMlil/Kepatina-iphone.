@@ -51,29 +51,8 @@ export async function showTestNotification(title: string, body: string) {
     });
     return;
   }
-  await showWebNotification(title, { body });
-}
-
-/**
- * Web notification. iPhone (home-screen app) and Android Chrome forbid `new Notification()`,
- * they only accept the service worker's showNotification, so that is tried first.
- */
-export async function showWebNotification(title: string, options: NotificationOptions = {}) {
-  const opts: NotificationOptions = {
-    icon: `${import.meta.env.BASE_URL}icon-192.png`,
-    ...options,
-  };
   try {
-    const reg = await navigator.serviceWorker?.getRegistration();
-    if (reg) {
-      await reg.showNotification(title, opts);
-      return;
-    }
-  } catch {
-    /* fall through to the classic API */
-  }
-  try {
-    new Notification(title, opts);
+    new Notification(title, { body, icon: "./icon-192.png" });
   } catch {
     /* ignore */
   }

@@ -4,6 +4,7 @@ import { extraDicts, type ExtraDict } from "./extra-i18n";
 import { passportDicts, type PassportDict } from "./passport-i18n";
 import { tagMedsDicts, type TagMedsDict } from "./tagmeds-i18n";
 import { newFeaturesDicts, type NewFeaturesDict } from "./new-features-i18n";
+import { memoriesDicts, type MemoriesDict } from "./memories-i18n";
 export { careGuides } from "./care-guides";
 
 const lv = {
@@ -62,7 +63,8 @@ const lv = {
   notifOn: "Paziņojumi ieslēgti. Tu saņemsi paziņojumu, kad pienāks laiks.",
   notifOff: "Ieslēdz paziņojumus, lai lietotne tev atgādinātu.",
   notifEnable: "Ieslēgt paziņojumus",
-  notifDenied: "Paziņojumi ir izslēgti. Atļauj tos tālruņa iestatījumos → Lietotnes → Ķepatiņa → Paziņojumi.",
+  notifDenied:
+    "Paziņojumi ir izslēgti. Atļauj tos tālruņa iestatījumos → Lietotnes → Ķepatiņa → Paziņojumi.",
   notifUnsupported: "Šī ierīce neatbalsta paziņojumus.",
   notifTest: "Paziņojumi ieslēgti!",
   upcoming: "Gaidāmās",
@@ -171,11 +173,20 @@ const lv = {
   spRabbit: "Trusis",
   spBird: "Putns",
   spHamster: "Kāmis",
+  spGuineaPig: "Jūrascūciņa",
+  spReptile: "Rāpuļi",
+  spFish: "Zivtiņas",
   notifPrefix: "Laiks parūpēties par",
 };
 
 export type BaseDict = typeof lv;
-export type Dict = BaseDict & HealthDict & ExtraDict & PassportDict & TagMedsDict & NewFeaturesDict;
+export type Dict = BaseDict &
+  HealthDict &
+  ExtraDict &
+  PassportDict &
+  TagMedsDict &
+  NewFeaturesDict &
+  MemoriesDict;
 
 const en: BaseDict = {
   appName: "Ķepatiņa",
@@ -230,7 +241,8 @@ const en: BaseDict = {
   notifOn: "Notifications are on. You'll be notified when it's time.",
   notifOff: "Turn on notifications so the app can remind you.",
   notifEnable: "Turn on notifications",
-  notifDenied: "Notifications are blocked. Allow them in your phone settings → Apps → Ķepatiņa → Notifications.",
+  notifDenied:
+    "Notifications are blocked. Allow them in your phone settings → Apps → Ķepatiņa → Notifications.",
   notifUnsupported: "This device doesn't support notifications.",
   notifTest: "Notifications are on!",
   upcoming: "Upcoming",
@@ -339,6 +351,9 @@ const en: BaseDict = {
   spRabbit: "Rabbit",
   spBird: "Bird",
   spHamster: "Hamster",
+  spGuineaPig: "Guinea pig",
+  spReptile: "Reptiles",
+  spFish: "Fish",
   notifPrefix: "Time to care for",
 };
 
@@ -399,7 +414,8 @@ const ru: BaseDict = {
   notifOn: "Уведомления включены. Вы получите уведомление, когда наступит время.",
   notifOff: "Включите уведомления, чтобы приложение могло напоминать вам.",
   notifEnable: "Включить уведомления",
-  notifDenied: "Уведомления отключены. Разрешите их в настройках телефона → Приложения → Ķepatiņa → Уведомления.",
+  notifDenied:
+    "Уведомления отключены. Разрешите их в настройках телефона → Приложения → Ķepatiņa → Уведомления.",
   notifUnsupported: "Это устройство не поддерживает уведомления.",
   notifTest: "Уведомления включены!",
   upcoming: "Предстоящие",
@@ -509,6 +525,9 @@ const ru: BaseDict = {
   spRabbit: "Кролик",
   spBird: "Птица",
   spHamster: "Хомяк",
+  spGuineaPig: "Морская свинка",
+  spReptile: "Рептилии",
+  spFish: "Рыбки",
   notifPrefix: "Пора позаботиться о",
 };
 
@@ -569,7 +588,8 @@ const fr: BaseDict = {
   notifOn: "Les notifications sont activées. Vous serez averti au moment prévu.",
   notifOff: "Activez les notifications pour recevoir les rappels de l’application.",
   notifEnable: "Activer les notifications",
-  notifDenied: "Les notifications sont bloquées. Autorisez-les dans les réglages du téléphone → Applications → Ķepatiņa → Notifications.",
+  notifDenied:
+    "Les notifications sont bloquées. Autorisez-les dans les réglages du téléphone → Applications → Ķepatiņa → Notifications.",
   notifUnsupported: "Cet appareil ne prend pas en charge les notifications.",
   notifTest: "Notifications activées !",
   upcoming: "À venir",
@@ -680,6 +700,9 @@ const fr: BaseDict = {
   spRabbit: "Lapin",
   spBird: "Oiseau",
   spHamster: "Hamster",
+  spGuineaPig: "Cochon d’Inde",
+  spReptile: "Reptiles",
+  spFish: "Poissons",
   notifPrefix: "Il est temps de prendre soin de",
 };
 
@@ -691,6 +714,7 @@ export const dicts: Record<Lang, Dict> = {
     ...passportDicts.lv,
     ...tagMedsDicts.lv,
     ...newFeaturesDicts.lv,
+    ...memoriesDicts.lv,
   },
   en: {
     ...en,
@@ -699,6 +723,7 @@ export const dicts: Record<Lang, Dict> = {
     ...passportDicts.en,
     ...tagMedsDicts.en,
     ...newFeaturesDicts.en,
+    ...memoriesDicts.en,
   },
   ru: {
     ...ru,
@@ -707,6 +732,7 @@ export const dicts: Record<Lang, Dict> = {
     ...passportDicts.ru,
     ...tagMedsDicts.ru,
     ...newFeaturesDicts.ru,
+    ...memoriesDicts.ru,
   },
   fr: {
     ...fr,
@@ -715,5 +741,6 @@ export const dicts: Record<Lang, Dict> = {
     ...passportDicts.fr,
     ...tagMedsDicts.fr,
     ...newFeaturesDicts.fr,
+    ...memoriesDicts.fr,
   },
 };

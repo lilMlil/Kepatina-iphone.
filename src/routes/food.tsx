@@ -4,10 +4,17 @@ import { Search, X } from "lucide-react";
 import { Avatar, Card, Chip, GhostButton, PageHeading, SpeciesSelector } from "@/components/kit";
 import { useApp } from "@/lib/store";
 import type { Species } from "@/lib/reminders";
-import foodData from "@/data/food-safety.json";
-import foodI18n from "@/data/food-i18n.json";
+import foodData1 from "@/data/food-safety.json";
+import foodData2 from "@/data/food-safety-2.json";
+import foodData3 from "@/data/food-safety-3.json";
+import foodData4 from "@/data/food-safety-4.json";
+import foodI18n1 from "@/data/food-i18n.json";
+import foodI18n2 from "@/data/food-i18n-2.json";
+import foodI18n3 from "@/data/food-i18n-3.json";
 
-const tr = foodI18n as Record<string, Record<string, string>>;
+// The data is split into several smaller files so each one stays easy to edit/upload.
+const foodData = [...foodData1, ...foodData2, ...foodData3, ...foodData4];
+const tr = { ...foodI18n1, ...foodI18n2, ...foodI18n3 } as Record<string, Record<string, string>>;
 const tx = (v: string, lang: string) => (lang === "lv" || !v ? v : (tr[v]?.[lang] ?? v));
 
 export const Route = createFileRoute("/food")({

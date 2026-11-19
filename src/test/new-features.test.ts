@@ -23,6 +23,12 @@ describe("Seasonal care", () => {
     expect(tipsFor(2, "Kāmis")).toHaveLength(1);
     expect(tipsFor(2, "Putns")).toHaveLength(1);
   });
+  it("shows species-specific summer and winter tips for guinea pigs, reptiles and fish", () => {
+    for (const s of ["Jūrascūciņa", "Rāpuļi", "Zivtiņas"] as const) {
+      expect(tipsFor(2, s)).toHaveLength(2);
+      expect(tipsFor(0, s)).toHaveLength(2);
+    }
+  });
 });
 describe("Local notification plan", () => {
   const med: MedCourse = {
@@ -64,7 +70,9 @@ describe("Local notification plan", () => {
     const plan = planNotifications({ reminders: [reminder] }, now);
     expect(plan).toHaveLength(5);
     expect(plan[0]?.at.getTime()).toBe(new Date(2026, 10, 3, 9, 0).getTime());
-    expect(planNotifications({ reminders: [reminder] }, new Date(2026, 10, 4))[0]?.at.getDate()).toBe(10);
+    expect(
+      planNotifications({ reminders: [reminder] }, new Date(2026, 10, 4))[0]?.at.getDate(),
+    ).toBe(10);
   });
   it("never plans more than the iOS limit and gives stable ids", () => {
     const many = Array.from({ length: 100 }, (_, i) => ({

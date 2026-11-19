@@ -48,25 +48,37 @@ export function Carousel({
           </div>
         ))}
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <button type="button" aria-label={prevLabel} onClick={() => go(index - 1)} className={arrowCls}>
-          <ChevronLeft className="h-6 w-6" />
-        </button>
-        <div className="flex items-center gap-1.5" aria-hidden="true">
-          {items.map((_, i) => (
-            <span
-              key={i}
-              className={cn(
-                "h-2 rounded-full transition-all",
-                i === index ? "w-5 bg-primary" : "w-2 bg-border",
-              )}
-            />
-          ))}
+      {count > 1 && (
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            aria-label={prevLabel}
+            onClick={() => go(index - 1)}
+            className={arrowCls}
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </button>
+          <div className="flex items-center gap-1.5" aria-hidden="true">
+            {items.map((_, i) => (
+              <span
+                key={i}
+                className={cn(
+                  "h-2 rounded-full transition-all",
+                  i === index ? "w-5 bg-primary" : "w-2 bg-border",
+                )}
+              />
+            ))}
+          </div>
+          <button
+            type="button"
+            aria-label={nextLabel}
+            onClick={() => go(index + 1)}
+            className={arrowCls}
+          >
+            <ChevronRight className="h-6 w-6" />
+          </button>
         </div>
-        <button type="button" aria-label={nextLabel} onClick={() => go(index + 1)} className={arrowCls}>
-          <ChevronRight className="h-6 w-6" />
-        </button>
-      </div>
+      )}
     </div>
   );
 }

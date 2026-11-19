@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { vaccinationPlan } from "@/lib/vaccine-schedule";
 import { SPECIES } from "@/lib/store";
-import foodData from "@/data/food-safety.json";
+import foodData1 from "@/data/food-safety.json";
+import foodData2 from "@/data/food-safety-2.json";
+import foodData3 from "@/data/food-safety-3.json";
+import foodData4 from "@/data/food-safety-4.json";
+
+const foodData = [...foodData1, ...foodData2, ...foodData3, ...foodData4];
 
 describe("Vaccination schedule", () => {
   it("schedules a puppy's first DHPPi dose at 8 weeks", () => {
@@ -34,6 +39,10 @@ describe("Vaccination schedule", () => {
   });
   it("has no routine vaccines for hamsters", () => {
     expect(vaccinationPlan("Kāmis", "2026-01-01", [], "2026-03-01")).toEqual([]);
+  });
+  it("has no routine vaccines for guinea pigs, reptiles and fish", () => {
+    for (const s of ["Jūrascūciņa", "Rāpuļi", "Zivtiņas"] as const)
+      expect(vaccinationPlan(s, "2026-01-01", [], "2026-03-01")).toEqual([]);
   });
 });
 

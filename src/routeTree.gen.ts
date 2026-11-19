@@ -12,13 +12,17 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CareRouteImport } from './routes/care'
 import { Route as ChecklistRouteImport } from './routes/checklist'
+import { Route as DocumentsRouteImport } from './routes/documents'
 import { Route as ExpensesRouteImport } from './routes/expenses'
+import { Route as FamilyChatRouteImport } from './routes/family-chat'
 import { Route as FoodRouteImport } from './routes/food'
 import { Route as FoundRouteImport } from './routes/found'
 import { Route as HealthRouteImport } from './routes/health'
 import { Route as MedsRouteImport } from './routes/meds'
+import { Route as MemoriesRouteImport } from './routes/memories'
 import { Route as PassportRouteImport } from './routes/passport'
 import { Route as PetsRouteImport } from './routes/pets'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as ReminderNewRouteImport } from './routes/reminder-new'
 import { Route as RemindersRouteImport } from './routes/reminders'
@@ -43,9 +47,19 @@ const ChecklistRoute = ChecklistRouteImport.update({
   path: '/checklist',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DocumentsRoute = DocumentsRouteImport.update({
+  id: '/documents',
+  path: '/documents',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ExpensesRoute = ExpensesRouteImport.update({
   id: '/expenses',
   path: '/expenses',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FamilyChatRoute = FamilyChatRouteImport.update({
+  id: '/family-chat',
+  path: '/family-chat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FoodRoute = FoodRouteImport.update({
@@ -68,6 +82,11 @@ const MedsRoute = MedsRouteImport.update({
   path: '/meds',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MemoriesRoute = MemoriesRouteImport.update({
+  id: '/memories',
+  path: '/memories',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PassportRoute = PassportRouteImport.update({
   id: '/passport',
   path: '/passport',
@@ -76,6 +95,11 @@ const PassportRoute = PassportRouteImport.update({
 const PetsRoute = PetsRouteImport.update({
   id: '/pets',
   path: '/pets',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProfileRoute = ProfileRouteImport.update({
@@ -123,13 +147,17 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/care': typeof CareRoute
   '/checklist': typeof ChecklistRoute
+  '/documents': typeof DocumentsRoute
   '/expenses': typeof ExpensesRoute
+  '/family-chat': typeof FamilyChatRoute
   '/food': typeof FoodRoute
   '/found': typeof FoundRoute
   '/health': typeof HealthRoute
   '/meds': typeof MedsRoute
+  '/memories': typeof MemoriesRoute
   '/passport': typeof PassportRoute
   '/pets': typeof PetsRoute
+  '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/reminder-new': typeof ReminderNewRoute
   '/reminders': typeof RemindersRoute
@@ -143,13 +171,17 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/care': typeof CareRoute
   '/checklist': typeof ChecklistRoute
+  '/documents': typeof DocumentsRoute
   '/expenses': typeof ExpensesRoute
+  '/family-chat': typeof FamilyChatRoute
   '/food': typeof FoodRoute
   '/found': typeof FoundRoute
   '/health': typeof HealthRoute
   '/meds': typeof MedsRoute
+  '/memories': typeof MemoriesRoute
   '/passport': typeof PassportRoute
   '/pets': typeof PetsRoute
+  '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/reminder-new': typeof ReminderNewRoute
   '/reminders': typeof RemindersRoute
@@ -164,13 +196,17 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/care': typeof CareRoute
   '/checklist': typeof ChecklistRoute
+  '/documents': typeof DocumentsRoute
   '/expenses': typeof ExpensesRoute
+  '/family-chat': typeof FamilyChatRoute
   '/food': typeof FoodRoute
   '/found': typeof FoundRoute
   '/health': typeof HealthRoute
   '/meds': typeof MedsRoute
+  '/memories': typeof MemoriesRoute
   '/passport': typeof PassportRoute
   '/pets': typeof PetsRoute
+  '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/reminder-new': typeof ReminderNewRoute
   '/reminders': typeof RemindersRoute
@@ -186,13 +222,17 @@ export interface FileRouteTypes {
     | '/'
     | '/care'
     | '/checklist'
+    | '/documents'
     | '/expenses'
+    | '/family-chat'
     | '/food'
     | '/found'
     | '/health'
     | '/meds'
+    | '/memories'
     | '/passport'
     | '/pets'
+    | '/privacy'
     | '/profile'
     | '/reminder-new'
     | '/reminders'
@@ -206,13 +246,17 @@ export interface FileRouteTypes {
     | '/'
     | '/care'
     | '/checklist'
+    | '/documents'
     | '/expenses'
+    | '/family-chat'
     | '/food'
     | '/found'
     | '/health'
     | '/meds'
+    | '/memories'
     | '/passport'
     | '/pets'
+    | '/privacy'
     | '/profile'
     | '/reminder-new'
     | '/reminders'
@@ -226,13 +270,17 @@ export interface FileRouteTypes {
     | '/'
     | '/care'
     | '/checklist'
+    | '/documents'
     | '/expenses'
+    | '/family-chat'
     | '/food'
     | '/found'
     | '/health'
     | '/meds'
+    | '/memories'
     | '/passport'
     | '/pets'
+    | '/privacy'
     | '/profile'
     | '/reminder-new'
     | '/reminders'
@@ -247,13 +295,17 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CareRoute: typeof CareRoute
   ChecklistRoute: typeof ChecklistRoute
+  DocumentsRoute: typeof DocumentsRoute
   ExpensesRoute: typeof ExpensesRoute
+  FamilyChatRoute: typeof FamilyChatRoute
   FoodRoute: typeof FoodRoute
   FoundRoute: typeof FoundRoute
   HealthRoute: typeof HealthRoute
   MedsRoute: typeof MedsRoute
+  MemoriesRoute: typeof MemoriesRoute
   PassportRoute: typeof PassportRoute
   PetsRoute: typeof PetsRoute
+  PrivacyRoute: typeof PrivacyRoute
   ProfileRoute: typeof ProfileRoute
   ReminderNewRoute: typeof ReminderNewRoute
   RemindersRoute: typeof RemindersRoute
@@ -287,11 +339,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChecklistRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/documents': {
+      id: '/documents'
+      path: '/documents'
+      fullPath: '/documents'
+      preLoaderRoute: typeof DocumentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/expenses': {
       id: '/expenses'
       path: '/expenses'
       fullPath: '/expenses'
       preLoaderRoute: typeof ExpensesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/family-chat': {
+      id: '/family-chat'
+      path: '/family-chat'
+      fullPath: '/family-chat'
+      preLoaderRoute: typeof FamilyChatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/food': {
@@ -322,6 +388,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MedsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/memories': {
+      id: '/memories'
+      path: '/memories'
+      fullPath: '/memories'
+      preLoaderRoute: typeof MemoriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/passport': {
       id: '/passport'
       path: '/passport'
@@ -334,6 +407,13 @@ declare module '@tanstack/react-router' {
       path: '/pets'
       fullPath: '/pets'
       preLoaderRoute: typeof PetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/profile': {
@@ -399,13 +479,17 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CareRoute: CareRoute,
   ChecklistRoute: ChecklistRoute,
+  DocumentsRoute: DocumentsRoute,
   ExpensesRoute: ExpensesRoute,
+  FamilyChatRoute: FamilyChatRoute,
   FoodRoute: FoodRoute,
   FoundRoute: FoundRoute,
   HealthRoute: HealthRoute,
   MedsRoute: MedsRoute,
+  MemoriesRoute: MemoriesRoute,
   PassportRoute: PassportRoute,
   PetsRoute: PetsRoute,
+  PrivacyRoute: PrivacyRoute,
   ProfileRoute: ProfileRoute,
   ReminderNewRoute: ReminderNewRoute,
   RemindersRoute: RemindersRoute,

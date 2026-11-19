@@ -1,4 +1,5 @@
-export type Species = "Suns" | "Kaķis" | "Trusis" | "Putns" | "Kāmis";
+export type Species =
+  "Suns" | "Kaķis" | "Trusis" | "Putns" | "Kāmis" | "Jūrascūciņa" | "Rāpuļi" | "Zivtiņas";
 
 export interface Pet {
   id: string;
@@ -18,6 +19,14 @@ export interface Pet {
   /** true = sterilised / neutered, false = not, undefined = unknown */
   neutered?: boolean | undefined;
 }
+
+/** Label of the "every day" repeat option (repeatDays = 1). */
+export const repeatDailyLabel = {
+  lv: "Katru dienu",
+  en: "Every day",
+  ru: "Каждый день",
+  fr: "Chaque jour",
+} as const;
 
 export interface Reminder {
   id: string;
